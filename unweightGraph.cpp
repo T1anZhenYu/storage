@@ -317,11 +317,6 @@ void Graph::unwightedShorestPath(int src)
 *************************************************/
 void Graph::printShorestPath(int src)
 {
-    // cout << "顶点\t"
-    //      << "known\t"
-    //      << "dist\t"
-    //      << "path\t"
-    //      << "cache file" << endl;
     for (int i = 0; i < vertex_num; ++i) {
         if (nodeArr[i].known) {
             // cout << i << "\t" << nodeArr[i].known << "\t" << nodeArr[i].dist << "\t" << nodeArr[i].path << "\t";
