@@ -20,13 +20,36 @@ using namespace std;
 #define FILENUM 40 //文件数目
 #define CACHESIZE 2 //顶点缓存空间
 #define MYINFINITY 1000000 //将MYINFINITY定义为无穷大的值
-#define Backhual 20 //回传时延
+#define BACKHUAL 20 //回传时延
 vector<float> filePopular(FILENUM, 0); //各个文件的流行度
 vector<float> soft2TightTimeLim(FILENUM, 0); //从松到紧的时延要求
 vector<float> tight2SoftTimeLim(FILENUM, 0); //从紧到送的时延要求
 vector<float> equalTimeLim(FILENUM, 1 / FILENUM); //处处相等的时延要求
 vector<vector<int>> Distance; //图中各点到其他点的最短距离
+void timelimtGenerate()
+{
+    int dispart = int(FILENUM / (BACKHUAL / 2));
+    int dis = BACKHUAL;
+    for (int i = 0; i < FILENUM; i++) {
+        soft2TightTimeLim[i] = dis;
+        tight2SoftTimeLim[FILENUM - 1 - i] = dis;
+        equalTimeLim[i] = BACKHUAL / 2;
+        if (i % dispart == 0) {
+            dis--;
+        }
+    }
+    cout << "soft2Tight" << endl;
+    for (int i = 0; i < FILENUM; i++) {
+        cout << soft2TightTimeLim[i] << " ";
+    }
+    cout << endl;
 
+    cout << "tight2Soft" << endl;
+    for (int i = 0; i < FILENUM; i++) {
+        cout << tight2SoftTimeLim[i] << " ";
+    }
+    cout << endl;
+}
 void Zipf(vector<float>& filePopular, int gamma)
 {
     float sum = 0;
@@ -38,10 +61,6 @@ void Zipf(vector<float>& filePopular, int gamma)
     for (int i = 1; i < FILENUM + 1; i++) {
         filePopular[i - 1] = pow(i, -gamma) / sum;
     }
-    for (int i = 0; i < FILENUM; i++) {
-        cout << filePopular[i] << " ";
-    }
-    cout << endl;
 }
 //保存每个顶点信息的数据结构
 class GraphNode {
@@ -63,7 +82,7 @@ private:
                 temp += filePopular[pos] * 100;
                 pos++;
             }
-            cout << "randnum:" << randnum << " temp:" << temp << " pos:" << pos - 1 << endl;
+            // cout << "randnum:" << randnum << " temp:" << temp << " pos:" << pos - 1 << endl;
             pos--;
             for (int j = 0; j < i; j++) {
                 if (cache[j] == pos) {
@@ -95,6 +114,16 @@ public:
         }
         cout << endl;
     }
+    int cacheHit(int fileid)
+    {
+        for (int i = 0; i < CACHESIZE; i++) {
+            // cout<<"cache "<<this->cache[i]<<" fileid:"<<fileid<<endl;
+            if (this->cache[i] == fileid) {
+                return 1;
+            }
+        }
+        return 0;
+    }
 };
 vector<GraphNode> nodeArr; //保存每个顶点信息的数组
 //图节点信息
@@ -123,7 +152,7 @@ public:
     void unwightedShorestPathAdv(int src); //算法2求最短距离
     void printShorestPath(int src); //输出顶点src到各个顶点最短距离的信息
     int getVertexNum(); //获取顶点个数
-    float cacheInDistance(); //计算在规定范围内，缓存命中的概率
+    void cacheInDistance(float& HitS2T, float& HitT2S, float& HitEqual); //计算在规定范围内，缓存命中的概率
 
 private:
     vector<int> get_graph_value(char* graph[], int columns);
@@ -135,8 +164,62 @@ private:
  * 参数列表：void
  * 返回结果：命中概率
 **************************************************/
-float Graph::cacheInDistance()
+void Graph::cacheInDistance(float& HitS2T, float& HitT2S, float& HitEqual)
 {
+    /*算法描述：
+        for(file in allFIle):
+            for(server in allServer):
+                for(neibor in allNeibor):
+                    if(neiborDis < fileTimelim):
+                        for(cache in allCache):
+                            if(cache == file):
+                                hit++;
+    */
+    float hitS2T, hitT2S, hitEqual;
+    hitS2T = 0;
+    hitT2S = 0;
+    hitEqual = 0;
+    for (int f = 0; f < FILENUM; f++) {
+        int fhitS2T = 0;
+        int fhitT2S = 0;
+        int fhitEqual = 0;
+        
+        for (int ser = 1; ser < this->getVertexNum(); ser++) {
+            int flagS2T = 0;
+            int flagT2S = 0;
+            int flagEqual = 0;
+            for (int nei = 1; nei < this->getVertexNum(); nei++) {
+                int flag = nodeArr[nei].cacheHit(f);
+                if (Distance[ser][nei] < soft2TightTimeLim[f] && flag) {
+
+                    if (!flagS2T) {
+                        fhitS2T++;
+                        flagS2T = 1;
+                    }
+                }
+                if (Distance[ser][nei] < tight2SoftTimeLim[f] && flag) {
+                    if (!flagT2S) {
+                        fhitT2S++;
+                        flagT2S = 1;
+                    }
+                }
+                if (Distance[ser][nei] < tight2SoftTimeLim[f] && flag) {
+                    if (!flagEqual) {
+                        fhitEqual++;
+                        flagEqual = 1;
+                    }
+                }
+            }
+        }
+        hitS2T += (float(fhitS2T) / float(this->getVertexNum()-1));
+        hitT2S += (float(fhitT2S) / float(this->getVertexNum()-1));
+        hitEqual += (float(fhitEqual) / float(this->getVertexNum()-1));
+        // cout<<"f:"<<f<<" hitS2t:"<<hitS2T<<" hitT2S"<<hitT2S<<endl;
+    }
+
+    HitEqual = hitEqual / FILENUM;
+    HitS2T = hitS2T / FILENUM;
+    HitT2S = hitT2S / FILENUM;
 }
 
 /*************************************************
@@ -234,16 +317,16 @@ void Graph::unwightedShorestPath(int src)
 *************************************************/
 void Graph::printShorestPath(int src)
 {
-    cout << "顶点\t"
-         << "known\t"
-         << "dist\t"
-         << "path\t"
-         << "cache file" << endl;
+    // cout << "顶点\t"
+    //      << "known\t"
+    //      << "dist\t"
+    //      << "path\t"
+    //      << "cache file" << endl;
     for (int i = 0; i < vertex_num; ++i) {
         if (nodeArr[i].known) {
-            cout << i << "\t" << nodeArr[i].known << "\t" << nodeArr[i].dist << "\t" << nodeArr[i].path << "\t";
+            // cout << i << "\t" << nodeArr[i].known << "\t" << nodeArr[i].dist << "\t" << nodeArr[i].path << "\t";
             Distance[src][i] = nodeArr[i].dist;
-            nodeArr[i].showCache();
+            // nodeArr[i].showCache();
         }
     }
 }
@@ -421,6 +504,7 @@ void release_buff(char** const buff, const int valid_item_num)
 int main(int argc, char* argv[])
 {
     Zipf(filePopular, 1);
+    timelimtGenerate();
     nodeArr.resize(MAX_VERTEX_NUM);
     char* topo[5000];
     int edge_num;
@@ -450,20 +534,25 @@ int main(int argc, char* argv[])
         G.unwightedShorestPath(s);
         G.printShorestPath(s);
     }
-    cout << "邻接矩阵" << endl;
+    cout << endl
+         << "邻接矩阵" << endl;
     cout << "#######################################" << endl;
     for (int i = 1; i < vertex_num; i++) {
-        cout << "vertex:" << i << " ";
+        cout << "vertex:" << i << "| ";
         for (int j = 1; j < vertex_num; j++) {
             cout << Distance[i][j] << " ";
         }
-        cout << " cached file: " << endl;
-        for (int j = 1; j < vertex_num; j++) {
-            nodeArr[j].showCache();
-        }
-        cout << endl;
-    }
+        cout << " cached file: ";
+        nodeArr[i].showCache();
 
+        // cout << endl;
+    }
+    float hitS2T, hitT2S, hitEqual;
+    G.cacheInDistance(hitS2T, hitT2S, hitEqual);
+    cout << endl
+         << "Hit in Distance" << endl;
+    cout << "#######################################" << endl;
+    cout << hitS2T << "\t" << hitT2S << "\t" << hitEqual << endl;
     release_buff(topo, edge_num);
 
     return 0;
