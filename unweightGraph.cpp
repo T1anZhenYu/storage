@@ -26,6 +26,13 @@ vector<float> soft2TightTimeLim(FILENUM, 0); //从松到紧的时延要求
 vector<float> tight2SoftTimeLim(FILENUM, 0); //从紧到送的时延要求
 vector<float> equalTimeLim(FILENUM, 1 / FILENUM); //处处相等的时延要求
 vector<vector<int>> Distance; //图中各点到其他点的最短距离
+
+/*******************************************************
+ * 函数名称 timelimtGenerate()
+ * 作用说明 生成三种时延要求
+ * 参数列表 void
+ * 返回值 void
+********************************************************/
 void timelimtGenerate()
 {
     int dispart = int(FILENUM / (BACKHUAL / 2));
@@ -66,36 +73,8 @@ void Zipf(vector<float>& filePopular, int gamma)
 class GraphNode {
 private:
     vector<int> cache;
-    void cachefileLRU()
-    {
-        float randnum, temp;
-        int pos;
-        int flag = 0;
-        // cout<<"vertex num:"<<this->val<<endl;
-        for (int i = 0; i < CACHESIZE; i++) {
-            temp = 0;
-            flag = 0;
-            randnum = (rand() % 100);
-
-            pos = 0;
-            while (temp < randnum) {
-                temp += filePopular[pos] * 100;
-                pos++;
-            }
-            // cout << "randnum:" << randnum << " temp:" << temp << " pos:" << pos - 1 << endl;
-            pos--;
-            for (int j = 0; j < i; j++) {
-                if (cache[j] == pos) {
-                    flag = 1;
-                }
-            }
-            if (flag == 1) {
-                i--;
-            } else {
-                cache[i] = pos;
-            }
-        }
-    }
+    // LRU 的缓存方式，在cache中缓存文件
+    void cachefileLRU();
 
 public:
     bool known; //当前顶点距离起点的距离是否确定
@@ -125,6 +104,42 @@ public:
         return 0;
     }
 };
+/*************************************************
+ * 函数名称：cachefileLRU();
+ * 功能描述：按LRU的方式缓存
+ * 参数列表：void
+ * 返回结果：void
+**************************************************/
+void GraphNode::cachefileLRU()
+{
+    float randnum, temp;
+    int pos;
+    int flag = 0;
+    // cout<<"vertex num:"<<this->val<<endl;
+    for (int i = 0; i < CACHESIZE; i++) {
+        temp = 0;
+        flag = 0;
+        randnum = (rand() % 100);
+
+        pos = 0;
+        while (temp < randnum) {
+            temp += filePopular[pos] * 100;
+            pos++;
+        }
+        pos--;
+        for (int j = 0; j < i; j++) {
+            if (cache[j] == pos) {
+                flag = 1;
+            }
+        }
+        if (flag == 1) {
+            i--;
+        } else {
+            cache[i] = pos;
+        }
+    }
+}
+
 vector<GraphNode> nodeArr; //保存每个顶点信息的数组
 //图节点信息
 typedef struct Node {
@@ -183,7 +198,7 @@ void Graph::cacheInDistance(float& HitS2T, float& HitT2S, float& HitEqual)
         int fhitS2T = 0;
         int fhitT2S = 0;
         int fhitEqual = 0;
-        
+
         for (int ser = 1; ser < this->getVertexNum(); ser++) {
             int flagS2T = 0;
             int flagT2S = 0;
@@ -211,9 +226,9 @@ void Graph::cacheInDistance(float& HitS2T, float& HitT2S, float& HitEqual)
                 }
             }
         }
-        hitS2T += (float(fhitS2T) / float(this->getVertexNum()-1));
-        hitT2S += (float(fhitT2S) / float(this->getVertexNum()-1));
-        hitEqual += (float(fhitEqual) / float(this->getVertexNum()-1));
+        hitS2T += (float(fhitS2T) / float(this->getVertexNum() - 1));
+        hitT2S += (float(fhitT2S) / float(this->getVertexNum() - 1));
+        hitEqual += (float(fhitEqual) / float(this->getVertexNum() - 1));
         // cout<<"f:"<<f<<" hitS2t:"<<hitS2T<<" hitT2S"<<hitT2S<<endl;
     }
 
