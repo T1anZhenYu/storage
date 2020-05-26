@@ -23,7 +23,7 @@ using namespace std;
 #define FILENUM 40 //文件数目
 
 #define MYINFINITY 1000000 //将MYINFINITY定义为无穷大的值
-#define BACKHUAL 20 //回传时延
+#define BACKHUAL 10 //回传时延
 #define LAMBDA 0.1 //服务器密度
 int CACHESIZE = 6; //顶点缓存空间
 vector<float> QF(FILENUM, 0); //各个文件的流行度
@@ -66,7 +66,7 @@ void fac()
 *******************************************************/
 void timelimtGenerate()
 {
-    int dispart = int(FILENUM / 20);
+    int dispart = int(FILENUM / BACKHUAL);
     int dis = BACKHUAL + 3;
     for (int i = 0; i < FILENUM; i++) {
         if ((i + 1) % dispart == 1) {
@@ -98,7 +98,7 @@ void Zipf(vector<float>& QF, int gamma)
 {
     float sum = 0;
     float temp = 0;
-    int dispart = int(FILENUM / 20);
+    int dispart = int(FILENUM / BACKHUAL);
     for (int i = 1; i < FILENUM + 1; i++) {
 
         if (i % dispart == 1) {
@@ -572,7 +572,7 @@ void Graph::LRUCacheProb()
     }
     cout << "LRUCacheProb\n";
     for (int i = 0; i < FILENUM; i++) {
-        if (i % 20 == 0) {
+        if (i % BACKHUAL== 0) {
             cout << LRUFileProb[i] << " ";
         }
     }
@@ -590,8 +590,11 @@ void Graph::RCSCacheProb()
     float p = 1.0 / FILENUM;
     cout << "RCS File Prob:\n";
     for (int i = 0; i < FILENUM; i++) {
+
         RCSFileProb[i] = p;
-        cout << RCSFileProb[i] << " ";
+        if (i % BACKHUAL == 0) {
+            cout << RCSFileProb[i] << " ";
+        }
     }
     cout << endl;
 }
@@ -700,21 +703,21 @@ void Graph::timeLimAwareCacheProb()
     }
     cout << "maxTLACFileProbS2T" << endl;
     for (int i = 0; i < FILENUM; i++) {
-        if (i % 20 == 0) {
+        if (i % BACKHUAL == 0) {
             cout << maxTLACFileProbS2T[i] << " ";
         }
     }
     cout << endl;
     cout << "maxTLACFileProbT2S" << endl;
     for (int i = 0; i < FILENUM; i++) {
-        if (i % 20 == 0) {
+        if (i % BACKHUAL == 0) {
             cout << maxTLACFileProbT2S[i] << " ";
         }
     }
     cout << endl;
     cout << "maxTLACFileProbEqual" << endl;
     for (int i = 0; i < FILENUM; i++) {
-        if (i % 20 == 0) {
+        if (i % BACKHUAL == 0) {
             cout << maxTLACFileProbEqual[i] << " ";
         }
     }
@@ -729,7 +732,7 @@ void Graph::timeLimAwareCacheProb()
 **************************************************/
 void Graph::cacheInDistance(float& HitS2T, float& HitT2S, float& HitEqual, int filed)
 {
-    cout << "in cacheInDistance\n";
+    // cout << "in cacheInDistance\n";
     float hitS2T, hitT2S, hitEqual;
     hitS2T = 0;
     hitT2S = 0;
@@ -771,9 +774,9 @@ void Graph::cacheInDistance(float& HitS2T, float& HitT2S, float& HitEqual, int f
             }
             // cout<<endl;
         }
-        cout <<"Method:"<<filed<<"\tfileID:" << f <<"\ttimelim:"<<soft2TightTimeLim[f]<<" "
-        <<tight2SoftTimeLim[f]<<" "<<equalTimeLim[f]<< "\tS2T:" << fhitS2T << "\tT2S:" 
-        << fhitT2S << "\tEqual:" << fhitEqual << endl;
+        // cout <<"Method:"<<filed<<"\tfileID:" << f <<"\ttimelim:"<<soft2TightTimeLim[f]<<" "
+        // <<tight2SoftTimeLim[f]<<" "<<equalTimeLim[f]<< "\tS2T:" << fhitS2T << "\tT2S:"
+        // << fhitT2S << "\tEqual:" << fhitEqual << endl;
         hitS2T += (float(fhitS2T) / float(this->getVertexNum() - 1));
         hitT2S += (float(fhitT2S) / float(this->getVertexNum() - 1));
         hitEqual += (float(fhitEqual) / float(this->getVertexNum() - 1));
@@ -881,9 +884,11 @@ void Graph::unwightedShorestPath(int src)
 void Graph::printShorestPath(int src)
 {
     for (int i = 0; i < vertex_num; ++i) {
-        if (nodeArr[i].known) {
+        if (nodeArr[i].known && src <= i) {
             // cout << i << "\t" << nodeArr[i].known << "\t" << nodeArr[i].dist << "\t" << nodeArr[i].path << "\t";
+
             Distance[src][i] = nodeArr[i].dist;
+            Distance[i][src] = nodeArr[i].dist;
             // nodeArr[i].showCacheLRU();
         }
     }
