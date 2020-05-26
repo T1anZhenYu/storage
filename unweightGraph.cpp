@@ -16,27 +16,29 @@
 #include <unistd.h>
 #include <vector>
 #include <fstream>
+#include <set>
 using namespace std;
 #define MAX_LINE_LEN 4000
 #define MAX_VERTEX_NUM 600 //图中最大顶点个数
-#define FILENUM 800 //文件数目
+#define FILENUM 40 //文件数目
 
 #define MYINFINITY 1000000 //将MYINFINITY定义为无穷大的值
 #define BACKHUAL 20 //回传时延
 #define LAMBDA 0.1 //服务器密度
-int CACHESIZE=6; //顶点缓存空间
+int CACHESIZE = 6; //顶点缓存空间
 vector<float> QF(FILENUM, 0); //各个文件的流行度
 vector<float> soft2TightTimeLim(FILENUM, 0); //从松到紧的时延要求
 vector<float> tight2SoftTimeLim(FILENUM, 0); //从紧到送的时延要求
 vector<float> equalTimeLim(FILENUM, 1 / FILENUM); //处处相等的时延要求
 vector<int> facNum(10, 1); //存储10个阶乘结果，防止反复计算
-vector<float> LRUFileProb(FILENUM, 0); //LRUCache
+vector<float> LRUFileProb(FILENUM, 0); //LRUCacheProb
 vector<float> tempTLACFileProbS2T(FILENUM, 0); //PfS2T
 vector<float> tempTLACFileProbT2S(FILENUM, 0); //PfT2S
 vector<float> tempTLACFileProbEqual(FILENUM, 0); //PfEqual
 vector<float> maxTLACFileProbS2T(FILENUM, 0); //max PfS2T
 vector<float> maxTLACFileProbT2S(FILENUM, 0); //max PfT2S
 vector<float> maxTLACFileProbEqual(FILENUM, 0); //max PfEqual
+vector<float> RCSFileProb(FILENUM, 0); //RCS CacheProb
 vector<vector<int>> Distance; //图中各点到其他点的最短距离
 /*******************************************************
  * 函数名称 fac()
@@ -72,7 +74,7 @@ void timelimtGenerate()
         }
         soft2TightTimeLim[i] = dis;
         tight2SoftTimeLim[FILENUM - 1 - i] = soft2TightTimeLim[i];
-        equalTimeLim[i] = BACKHUAL / 3;
+        equalTimeLim[i] = BACKHUAL / 2;
     }
     cout << "soft2Tight" << endl;
     for (int i = 0; i < FILENUM; i++) {
@@ -117,10 +119,11 @@ void Zipf(vector<float>& QF, int gamma)
 //保存每个顶点信息的数据结构
 class GraphNode {
 private:
-    vector<int> cacheLRU; //LRU 或 RCS的各个文件的缓存概率
-    vector<int> cacheTLACS2T; //TLAC 的各个文件的缓存概率 在S2T下
-    vector<int> cacheTLACT2S; //TLAC 的各个文件的缓存概率 在T2S下
-    vector<int> cacheTLACEqual; //TLAC 的各个文件的缓存概率 在Equal下
+    vector<int> cacheLRU; //LRU的缓存文件ID列表
+    vector<int> cacheTLACS2T; //TLAC 的缓存文件ID列表 在S2T下
+    vector<int> cacheTLACT2S; //TLAC 的缓存文件ID列表 在T2S下
+    vector<int> cacheTLACEqual; //TLAC 的缓存文件ID列表 在Equal下
+    vector<int> cacheRCS; //RCS
     // LRU 的缓存方式，在cache中缓存文件
 
 public:
@@ -129,17 +132,46 @@ public:
     int path; //当前顶点距离起点的最短路径的前一个顶点
     void cachefileLRU(); //根据LRU下各个文件的缓存概率，缓存文件
     void cachefileTLAC(); //根据TLAC下各个文件的缓存概率，缓存文件
-    void targetFunc(float& DS2T, float& DT2S, float& DEqual, int filed);
+    void cachefileRCS(); //根据RCS下各个文件的缓存概率，缓存文件
+    vector<int> getLRUCache()
+    {
+        return cacheLRU;
+    }
+    vector<int> getRCSCache()
+    {
+        return cacheRCS;
+    }
+    vector<int> getTLACS2TCache()
+    {
+        return cacheTLACS2T;
+    }
+    vector<int> getTLACT2SCache()
+    {
+        return cacheTLACT2S;
+    }
+    vector<int> getTLACEqualCache()
+    {
+        return cacheTLACEqual;
+    }
+    void targetFunc(float& DS2T, float& DT2S, float& DEqual, int filed); //目标函数
     GraphNode()
     {
         cacheLRU.resize(CACHESIZE);
         cacheTLACS2T.resize(CACHESIZE);
         cacheTLACT2S.resize(CACHESIZE);
         cacheTLACEqual.resize(CACHESIZE);
+        cacheRCS.resize(CACHESIZE);
+    }
+    void showCacheRCS()
+    {
+        cout << "\t|RCS: ";
+        for (int i = 0; i < CACHESIZE; i++) {
+            cout << setw(4) << this->cacheRCS[i] << " ";
+        }
     }
     void showCacheLRU()
     {
-        // cout << "Vertex:" << this->val << " cache:";
+        cout << "\t|LRU: ";
         for (int i = 0; i < CACHESIZE; i++) {
             cout << setw(4) << this->cacheLRU[i] << " ";
         }
@@ -169,6 +201,13 @@ public:
                     return 1;
                 }
             }
+        } else if (filed == 1) {
+            for (int i = 0; i < CACHESIZE; i++) {
+                // cout<<"cache "<<this->cache[i]<<" id:"<<id<<endl;
+                if (this->cacheRCS[i] == id) {
+                    return 1;
+                }
+            }
         } else if (filed == 2) {
             for (int i = 0; i < CACHESIZE; i++) {
                 // cout<<"cache "<<this->cache[i]<<" id:"<<id<<endl;
@@ -194,7 +233,41 @@ public:
         return 0;
     }
 };
+/*************************************************
+ * 函数名称：cachefileRCS();
+ * 功能描述：按RCS的方式缓存
+ * 参数列表：void
+ * 返回结果：void
+**************************************************/
+void GraphNode::cachefileRCS()
+{
+    float randnum, temp;
+    int pos;
+    int flag = 0;
+    // cout<<"vertex num:"<<this->val<<endl;
+    for (int i = 0; i < CACHESIZE; i++) {
+        temp = 0;
+        flag = 0;
+        randnum = (rand() % 100);
 
+        pos = 0;
+        while (temp < randnum) {
+            temp += RCSFileProb[pos] * 100;
+            pos++;
+        }
+        pos--;
+        for (int j = 0; j < i; j++) {
+            if (cacheRCS[j] == pos) {
+                flag = 1;
+            }
+        }
+        if (flag == 1 || pos == -1) {
+            i--;
+        } else {
+            cacheRCS[i] = pos;
+        }
+    }
+}
 /*************************************************
  * 函数名称：cachefileTLAC();
  * 功能描述：按TLAC的方式缓存
@@ -223,7 +296,7 @@ void GraphNode::cachefileTLAC()
                 flag = 1;
             }
         }
-        if (flag == 1) {
+        if (flag == 1 || pos == -1) {
             i--;
         } else {
             cacheTLACS2T[i] = pos;
@@ -246,7 +319,7 @@ void GraphNode::cachefileTLAC()
                 flag = 1;
             }
         }
-        if (flag == 1) {
+        if (flag == 1 || pos == -1) {
             i--;
         } else {
             cacheTLACT2S[i] = pos;
@@ -268,7 +341,7 @@ void GraphNode::cachefileTLAC()
                 flag = 1;
             }
         }
-        if (flag == 1) {
+        if (flag == 1 || pos == -1) {
             i--;
         } else {
             cacheTLACEqual[i] = pos;
@@ -293,7 +366,7 @@ void GraphNode::cachefileLRU()
         randnum = (rand() % 100);
 
         pos = 0;
-        while (temp < randnum) {
+        while (temp <= randnum) {
             temp += LRUFileProb[pos] * 100;
             pos++;
         }
@@ -303,7 +376,7 @@ void GraphNode::cachefileLRU()
                 flag = 1;
             }
         }
-        if (flag == 1) {
+        if (flag == 1 || pos == -1) {
             i--;
         } else {
             cacheLRU[i] = pos;
@@ -335,6 +408,12 @@ private:
     vector<float> sigmaS2T;
     vector<float> sigmaT2S;
     vector<float> sigmaEqual;
+    set<int> LRUset;
+    set<int> RCSset;
+    set<int> TLACS2Tset;
+    set<int> TLACT2Sset;
+    set<int> TLACEqualset;
+    float tempDS2T, tempDT2S, tempDEqual, minDS2T, minDT2S, minDEqual;
 
 public:
     Graph() {}
@@ -348,12 +427,63 @@ public:
     void cacheInDistance(float& HitS2T, float& HitT2S, float& HitEqual, int filed); //计算在规定范围内，缓存命中的概率
     void timeLimAwareCacheProb(); //计算TLAC算法的各个文件的缓存概率
     void LRUCacheProb(); //计算LRU中各个文件的缓存概率
-    void targetFunc(float& DS2T, float& DT2S, float& DEqual, int filed);
+    void RCSCacheProb(); //计算RCS中各个文件的缓存概率
+    void targetFunc(float& DS2T, float& DT2S, float& DEqual, int filed); //目标函数值
+    void fileDiversitySet(GraphNode* Node);
+    void clearAllSet()
+    {
+        LRUset.clear();
+        RCSset.clear();
+        TLACEqualset.clear();
+        TLACS2Tset.clear();
+        TLACT2Sset.clear();
+    }
+    int getLRUSetSize()
+    {
+        return LRUset.size();
+    }
+    int getRCSSetSize()
+    {
+        return RCSset.size();
+    }
+    int getTLACS2TSize()
+    {
+        return TLACS2Tset.size();
+    }
+    int getTLACT2SSize()
+    {
+        return TLACT2Sset.size();
+    }
+    int getTLACEqualSize()
+    {
+        return TLACEqualset.size();
+    }
 
 private:
     vector<int> get_graph_value(char* graph[], int columns);
     void addEdge(char* graph[], int columns);
 };
+/*************************************************
+ * 函数名称：fileDiversitySet();
+ * 功能描述：给定一个节点，将其所有缓存的内容放入set
+ * 参数列表：节点指针。
+ * 返回结果：void
+**************************************************/
+void Graph::fileDiversitySet(GraphNode* node)
+{
+    vector<int> tempLRU = node->getLRUCache();
+    vector<int> tempRCS = node->getRCSCache();
+    vector<int> tempTLACS2T = node->getTLACS2TCache();
+    vector<int> tempTLACT2S = node->getTLACT2SCache();
+    vector<int> tempTLACEqual = node->getTLACEqualCache();
+    for (int i = 0; i < CACHESIZE; i++) {
+        LRUset.insert(tempLRU[i]);
+        RCSset.insert(tempRCS[i]);
+        TLACS2Tset.insert(tempTLACS2T[i]);
+        TLACT2Sset.insert(tempTLACT2S[i]);
+        TLACEqualset.insert(tempTLACEqual[i]);
+    }
+}
 
 /*************************************************
  * 函数名称：targetFunc();
@@ -397,32 +527,34 @@ void Graph::targetFunc(float& DS2T, float& DT2S, float& DEqual, int filed)
             sumEqualSigma += sigmaEqual[i] * (tempTLACFileProbEqual[i] - 1);
             // cout<<"tempTLACFileProbT2S: "<<tempTLACFileProbT2S[i]<<" exp: "<<exp( * M_PI * pow(tight2SoftTimeLim[i], 2) * LAMBDA * tempTLACFileProbT2S[i])<<" sum:"<<sumT2SA;
         }
-        DS2T = sumS2TA + (sumS2Tmu - CACHESIZE) * muS2T - sumS2TGamma + sumS2TSigma;
-        DT2S = sumT2SA + (sumT2Smu - CACHESIZE) * muT2S - sumT2SGamma + sumT2SSigma;
-        DEqual = sumEqualA + (sumEqualmu - CACHESIZE) * muEqual - sumEqualGamma + sumEqualSigma;
+        DS2T = sumS2TA + (sumS2Tmu - (1 + CACHESIZE / 10)) * muS2T - sumS2TGamma + sumS2TSigma;
+        DT2S = sumT2SA + (sumT2Smu - (1 + CACHESIZE / 10)) * muT2S - sumT2SGamma + sumT2SSigma;
+        DEqual = sumEqualA + (sumEqualmu - (1 + CACHESIZE / 10)) * muEqual - sumEqualGamma + sumEqualSigma;
     } else if (filed == 0) {
         for (int i = 0; i < FILENUM; i++) {
             sumS2TA += QF[i] * (1 - exp(-1 * M_PI * pow(soft2TightTimeLim[i], 2) * LAMBDA * LRUFileProb[i]));
             sumT2SA += QF[i] * (1 - exp(-1 * M_PI * pow(tight2SoftTimeLim[i], 2) * LAMBDA * LRUFileProb[i]));
             sumEqualA += QF[i] * (1 - exp(-1 * M_PI * pow(equalTimeLim[i], 2) * LAMBDA * LRUFileProb[i]));
-            sumS2Tmu += LRUFileProb[i];
-            sumS2TGamma += gammaS2T[i] * LRUFileProb[i];
-            sumS2TSigma += sigmaS2T[i] * (LRUFileProb[i] - 1);
 
-            sumT2Smu += LRUFileProb[i];
-            sumT2SGamma += gammaT2S[i] * LRUFileProb[i];
-            sumT2SSigma += sigmaT2S[i] * (LRUFileProb[i] - 1);
-
-            sumEqualmu += LRUFileProb[i];
-            sumEqualGamma += gammaEqual[i] * LRUFileProb[i];
-            sumEqualSigma += sigmaEqual[i] * (LRUFileProb[i] - 1);
             // cout<<"tempTLACFileProbT2S: "<<tempTLACFileProbT2S[i]<<" exp: "<<exp( * M_PI * pow(tight2SoftTimeLim[i], 2) * LAMBDA * tempTLACFileProbT2S[i])<<" sum:"<<sumT2SA;
         }
-        DS2T = sumS2TA + (sumS2Tmu - CACHESIZE) * muS2T - sumS2TGamma + sumS2TSigma;
-        DT2S = sumT2SA + (sumT2Smu - CACHESIZE) * muT2S - sumT2SGamma + sumT2SSigma;
-        DEqual = sumEqualA + (sumEqualmu - CACHESIZE) * muEqual - sumEqualGamma + sumEqualSigma;
+        DS2T = sumS2TA;
+        DT2S = sumT2SA;
+        DEqual = sumEqualA;
+    } else if (filed == 1) {
+        for (int i = 0; i < FILENUM; i++) {
+            sumS2TA += QF[i] * (1 - exp(-1 * M_PI * pow(soft2TightTimeLim[i], 2) * LAMBDA * RCSFileProb[i]));
+            sumT2SA += QF[i] * (1 - exp(-1 * M_PI * pow(tight2SoftTimeLim[i], 2) * LAMBDA * RCSFileProb[i]));
+            sumEqualA += QF[i] * (1 - exp(-1 * M_PI * pow(equalTimeLim[i], 2) * LAMBDA * RCSFileProb[i]));
+
+            // cout<<"tempTLACFileProbT2S: "<<tempTLACFileProbT2S[i]<<" exp: "<<exp( * M_PI * pow(tight2SoftTimeLim[i], 2) * LAMBDA * tempTLACFileProbT2S[i])<<" sum:"<<sumT2SA;
+        }
+        DS2T = sumS2TA;
+        DT2S = sumT2SA;
+        DEqual = sumEqualA;
     }
 }
+
 /*************************************************
  * 函数名称：LRUCacheProb();
  * 功能描述：按TLAC的方式缓存
@@ -447,6 +579,23 @@ void Graph::LRUCacheProb()
     cout << endl;
 }
 /*************************************************
+ * 函数名称：RCSCacheProb();
+ * 功能描述：按RCS的方式缓存,计算各个文件的概率
+ * 参数列表：void
+ * 返回结果：void
+**************************************************/
+
+void Graph::RCSCacheProb()
+{
+    float p = 1.0 / FILENUM;
+    cout << "RCS File Prob:\n";
+    for (int i = 0; i < FILENUM; i++) {
+        RCSFileProb[i] = p;
+        cout << RCSFileProb[i] << " ";
+    }
+    cout << endl;
+}
+/*************************************************
  * 函数名称：timeLimAwareCacheProb();
  * 功能描述：按TLAC的方式缓存
  * 参数列表：void
@@ -454,6 +603,7 @@ void Graph::LRUCacheProb()
 **************************************************/
 void Graph::timeLimAwareCacheProb()
 {
+
     float tempDS2T, tempDT2S, tempDEqual, minDS2T, minDT2S, minDEqual;
 
     targetFunc(tempDS2T, tempDT2S, tempDEqual, 0);
@@ -462,12 +612,12 @@ void Graph::timeLimAwareCacheProb()
     minDEqual = tempDEqual;
 
     for (int i = 0; i < FILENUM; i++) {
-        tempTLACFileProbS2T[i] = LRUFileProb[i];
-        tempTLACFileProbT2S[i] = LRUFileProb[i];
-        tempTLACFileProbEqual[i] = LRUFileProb[i];
-        maxTLACFileProbS2T[i] = LRUFileProb[i];
-        maxTLACFileProbT2S[i] = LRUFileProb[i];
-        maxTLACFileProbEqual[i] = LRUFileProb[i];
+        tempTLACFileProbS2T[i] = RCSFileProb[i];
+        tempTLACFileProbT2S[i] = RCSFileProb[i];
+        tempTLACFileProbEqual[i] = RCSFileProb[i];
+        maxTLACFileProbS2T[i] = RCSFileProb[i];
+        maxTLACFileProbT2S[i] = RCSFileProb[i];
+        maxTLACFileProbEqual[i] = RCSFileProb[i];
     }
     float gradS2T = 0;
     float gradT2S = 0;
@@ -541,6 +691,9 @@ void Graph::timeLimAwareCacheProb()
         }
     }
     for (int i = 0; i < FILENUM; i++) {
+        maxTLACFileProbS2T[i] = maxTLACFileProbS2T[i] < 0 ? 0.00001 : maxTLACFileProbS2T[i];
+        maxTLACFileProbT2S[i] = maxTLACFileProbT2S[i] < 0 ? 0.00001 : maxTLACFileProbT2S[i];
+        maxTLACFileProbEqual[i] = maxTLACFileProbEqual[i] < 0 ? 0.00001 : maxTLACFileProbEqual[i];
         tempTLACFileProbS2T[i] = maxTLACFileProbS2T[i];
         tempTLACFileProbT2S[i] = maxTLACFileProbT2S[i];
         tempTLACFileProbEqual[i] = maxTLACFileProbEqual[i];
@@ -576,6 +729,7 @@ void Graph::timeLimAwareCacheProb()
 **************************************************/
 void Graph::cacheInDistance(float& HitS2T, float& HitT2S, float& HitEqual, int filed)
 {
+    cout << "in cacheInDistance\n";
     float hitS2T, hitT2S, hitEqual;
     hitS2T = 0;
     hitT2S = 0;
@@ -589,29 +743,37 @@ void Graph::cacheInDistance(float& HitS2T, float& HitT2S, float& HitEqual, int f
             int flagS2T = 0;
             int flagT2S = 0;
             int flagEqual = 0;
+            // cout << "\tserID:" << ser;
             for (int nei = 1; nei < this->getVertexNum(); nei++) {
                 int flag = nodeArr[nei].cacheHit(f, filed);
-                if (Distance[ser][nei] < soft2TightTimeLim[f] && flag) {
+                if (Distance[ser][nei] <= soft2TightTimeLim[f] && flag) {
 
                     if (!flagS2T) {
                         fhitS2T++;
                         flagS2T = 1;
+                        // cout << "\tS2T";
                     }
                 }
-                if (Distance[ser][nei] < tight2SoftTimeLim[f] && flag) {
+                if (Distance[ser][nei] <= tight2SoftTimeLim[f] && flag) {
                     if (!flagT2S) {
                         fhitT2S++;
                         flagT2S = 1;
+                        // cout<<"\tT2S";
                     }
                 }
-                if (Distance[ser][nei] < equalTimeLim[f] && flag) {
+                if (Distance[ser][nei] <= equalTimeLim[f] && flag) {
                     if (!flagEqual) {
                         fhitEqual++;
                         flagEqual = 1;
+                        // cout<<"\tEqual";
                     }
                 }
             }
+            // cout<<endl;
         }
+        cout <<"Method:"<<filed<<"\tfileID:" << f <<"\ttimelim:"<<soft2TightTimeLim[f]<<" "
+        <<tight2SoftTimeLim[f]<<" "<<equalTimeLim[f]<< "\tS2T:" << fhitS2T << "\tT2S:" 
+        << fhitT2S << "\tEqual:" << fhitEqual << endl;
         hitS2T += (float(fhitS2T) / float(this->getVertexNum() - 1));
         hitT2S += (float(fhitT2S) / float(this->getVertexNum() - 1));
         hitEqual += (float(fhitEqual) / float(this->getVertexNum() - 1));
@@ -843,6 +1005,9 @@ Graph::Graph(char* graph[], int edgenum)
     sigmaEqual.resize(FILENUM);
     sigmaS2T.resize(FILENUM);
     sigmaT2S.resize(FILENUM);
+    minDEqual = 0;
+    minDS2T = 0;
+    minDT2S = 0;
     for (int i = 0; i < FILENUM; i++) {
         gammaS2T[i] = 0;
         gammaEqual[i] = 0;
@@ -925,7 +1090,7 @@ int main(int argc, char* argv[])
     char* demand;
     int demand_num;
 
-    char* topo_file = "undirectedGraph.txt";
+    char* topo_file = "Graph.txt";
 
     edge_num = read_file(topo, 5000, topo_file);
     if (edge_num == 0) {
@@ -949,17 +1114,29 @@ int main(int argc, char* argv[])
         G.printShorestPath(s);
     }
     ofstream out("result.txt");
-    for (int i = 1; i < 20; i++) {
+    for (int i = 4; i < 5; i++) {
         CACHESIZE = i;
-        out<<"CacheSize:"<<CACHESIZE;
+        cout << "######################################" << endl;
+        cout << "######################################" << endl;
+
+        cout << "CacheSize:" << CACHESIZE << endl;
+        out << "CacheSize:" << CACHESIZE;
         G.LRUCacheProb(); //计算LRU的各个文件的缓存概率
         G.timeLimAwareCacheProb(); //计算TLAC的各个文件的缓存概率
+        G.RCSCacheProb(); //计算RCS的各个文件的缓存概率
+        cout << "befor file set:" << G.getRCSSetSize() << endl;
         for (int s = 1; s < vertex_num; s++) {
             nodeArr[s].cachefileTLAC(); //各个节点根据TLAC的概率，开始缓存文件。
             nodeArr[s].cachefileLRU(); //各个节点根据LRU的概率，开始缓存文件。
+            nodeArr[s].cachefileRCS(); //各个节点根据LRU的概率，开始缓存文件。
+            G.fileDiversitySet(&nodeArr[s]);
         }
+        out << "\tLRUDiversity:" << float(G.getLRUSetSize()) / FILENUM << "\tRCSDiversity:"
+            << float(G.getRCSSetSize()) / FILENUM << "\tTLAC S2T:" << float(G.getTLACS2TSize()) / FILENUM
+            << "\t T2S:" << float(G.getTLACT2SSize()) / FILENUM << "\tEqual:" << float(G.getTLACEqualSize()) / FILENUM;
         cout << endl
-             << "邻接矩阵" << endl;
+             << "邻接矩阵 |各类算法缓存副本数量 LRU:" << G.getLRUSetSize() << " RCS:" << G.getRCSSetSize()
+             << " TLAC S2T:" << G.getTLACS2TSize() << " TLAC T2S:" << G.getTLACT2SSize() << " TLAC Equal:" << G.getTLACEqualSize() << endl;
         cout << "#######################################" << endl;
         for (int i = 1; i < vertex_num; i++) {
             cout << "vertex:" << i << "| ";
@@ -968,6 +1145,7 @@ int main(int argc, char* argv[])
             }
             cout << "\tcached file: ";
             nodeArr[i].showCacheLRU();
+            nodeArr[i].showCacheRCS();
             // cout<<"\tTLAC S2T:";
             nodeArr[i].showCacheTLAC();
             cout << endl;
@@ -978,26 +1156,27 @@ int main(int argc, char* argv[])
              << "LRU Hit in Distance" << endl;
         cout << "#######################################" << endl;
         cout << hitS2T << "\t" << hitT2S << "\t" << hitEqual << endl;
-        out<<"\tLRUCacheInDistanceS2T:"<<hitS2T<<"\tLRUCacheInDistanceT2S:"<<hitT2S<<"\tLRUCacheInDistanceEqual:"<<hitEqual;
+        out << "\tLRUCacheInDistanceS2T:" << hitS2T << "\tLRUCacheInDistanceT2S:" << hitT2S << "\tLRUCacheInDistanceEqual:" << hitEqual;
+
+        G.cacheInDistance(hitS2T, hitT2S, hitEqual, 1);
+        cout << endl
+             << "RCS Hit in Distance" << endl;
+        cout << "#######################################" << endl;
+        cout << hitS2T << "\t" << hitT2S << "\t" << hitEqual << endl;
+        out << "\tRCSCacheInDistanceS2T:" << hitS2T << "\tRCSCacheInDistanceT2S:" << hitT2S << "\tRCSCacheInDistanceEqual:" << hitEqual;
+
         G.cacheInDistance(hitS2T, hitT2S, hitEqual, 2);
         cout << endl
-             << "TLAC S2T Hit in Distance" << endl;
+             << "TLAC Hit in Distance" << endl;
         cout << "#######################################" << endl;
-        cout << hitS2T << "\t" << endl;
-        out<<"\tTLACCacheInDistanceS2T:"<<hitS2T;
-
+        cout << hitS2T << "\t";
+        out << "\tTLACCacheInDistanceS2T:" << hitS2T;
         G.cacheInDistance(hitS2T, hitT2S, hitEqual, 3);
-        cout << endl
-             << "TLAC T2S Hit in Distance" << endl;
-        cout << "#######################################" << endl;
-        cout << hitT2S << "\t" << endl;
-        out<<"\tTLACCacheInDistanceT2S:"<<hitT2S;
+        cout << hitT2S << "\t";
+        out << "\tTLACCacheInDistanceT2S:" << hitT2S;
         G.cacheInDistance(hitS2T, hitT2S, hitEqual, 4);
-        cout << endl
-             << "TLAC Equal Hit in Distance" << endl;
-        cout << "#######################################" << endl;
         cout << hitEqual << "\t" << endl;
-        out<<"\tTLACCacheInDistanceEqual:"<<hitEqual;
+        out << "\tTLACCacheInDistanceEqual:" << hitEqual;
 
         float targetFuncValueS2T, targetFuncValueT2S, targetFuncValueEqual;
         G.targetFunc(targetFuncValueS2T, targetFuncValueT2S, targetFuncValueEqual, 0);
@@ -1005,39 +1184,48 @@ int main(int argc, char* argv[])
              << "LRU target Func Value" << endl;
         cout << "#######################################" << endl;
         cout << targetFuncValueS2T << "\t" << targetFuncValueT2S << "\t" << targetFuncValueEqual << endl;
-        out<<"\tLRUtargetFunValueS2T:"<<targetFuncValueS2T<<"\tLRUtargetFuncValueT2S:"<<targetFuncValueT2S<<"\tLRUtargetFuncValueEqual:"<<targetFuncValueEqual;
+        out << "\tLRUtargetFunValueS2T:" << targetFuncValueS2T << "\tLRUtargetFuncValueT2S:" << targetFuncValueT2S << "\tLRUtargetFuncValueEqual:" << targetFuncValueEqual;
+
+        G.targetFunc(targetFuncValueS2T, targetFuncValueT2S, targetFuncValueEqual, 1);
+        cout << endl
+             << "RCS target Func Value" << endl;
+        cout << "#######################################" << endl;
+        cout << targetFuncValueS2T << "\t" << targetFuncValueT2S << "\t" << targetFuncValueEqual << endl;
+        out << "\tRCStargetFunValueS2T:" << targetFuncValueS2T << "\tRCStargetFuncValueT2S:" << targetFuncValueT2S << "\tRCStargetFuncValueEqual:" << targetFuncValueEqual;
+
         G.targetFunc(targetFuncValueS2T, targetFuncValueT2S, targetFuncValueEqual, 2);
         cout << endl
              << "TLAC target Func Value" << endl;
         cout << "#######################################" << endl;
         cout << targetFuncValueS2T << "\t" << targetFuncValueT2S << "\t" << targetFuncValueEqual << endl;
-        out<<"\tTLACtargetFunValueS2T:"<<targetFuncValueS2T<<"\tTLACtargetFuncValueT2S:"<<targetFuncValueT2S<<"\tTLACtargetFuncValueEqual:"<<targetFuncValueEqual;
-        int dispart = int(FILENUM/20);
-        out<<"\tLRUCacheProb:";
-        for(int i = 0; i<FILENUM;i++){
-            if(i%dispart==0){
-                out<<LRUFileProb[i]<<" ";
+        out << "\tTLACtargetFunValueS2T:" << targetFuncValueS2T << "\tTLACtargetFuncValueT2S:" << targetFuncValueT2S << "\tTLACtargetFuncValueEqual:" << targetFuncValueEqual;
+        int dispart = int(FILENUM / 20);
+        out << "\tLRUCacheProb:";
+        for (int i = 0; i < FILENUM; i++) {
+            if (i % dispart == 0) {
+                out << LRUFileProb[i] << " ";
             }
         }
-        out<<"\tTLACCacheProbS2T:";
-        for(int i = 0; i<FILENUM;i++){
-            if(i%dispart==0){
-                out<<maxTLACFileProbS2T[i]<<" ";
-            }
-        }        
-        out<<"\tTLACCacheProbT2S:";
-        for(int i = 0; i<FILENUM;i++){
-            if(i%dispart==0){
-                out<<maxTLACFileProbT2S[i]<<" ";
+        out << "\tTLACCacheProbS2T:";
+        for (int i = 0; i < FILENUM; i++) {
+            if (i % dispart == 0) {
+                out << maxTLACFileProbS2T[i] << " ";
             }
         }
-        out<<"\tTLACCacheProbEqual:";
-        for(int i = 0; i<FILENUM;i++){
-            if(i%dispart==0){
-                out<<maxTLACFileProbEqual[i]<<" ";
+        out << "\tTLACCacheProbT2S:";
+        for (int i = 0; i < FILENUM; i++) {
+            if (i % dispart == 0) {
+                out << maxTLACFileProbT2S[i] << " ";
             }
         }
-        out<<"\n";
+        out << "\tTLACCacheProbEqual:";
+        for (int i = 0; i < FILENUM; i++) {
+            if (i % dispart == 0) {
+                out << maxTLACFileProbEqual[i] << " ";
+            }
+        }
+        out << "\n";
+        G.clearAllSet();
     }
 
     release_buff(topo, edge_num);

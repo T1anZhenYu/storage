@@ -61,7 +61,7 @@ void generageGraph::work(string filename)
         }
     }
     cout << "content size:" << content.size() << endl;
-    ofstream out("undirectedGraph.txt");
+    ofstream out("Graph.txt");
     if (out.is_open()) {
         for (int i = 0; i < content.size(); i++) {
             cout << content[i] << endl;
@@ -72,6 +72,6 @@ void generageGraph::work(string filename)
 int main()
 {
     generageGraph* g;
-    g = new generageGraph(100, 3);
+    g = new generageGraph(10, 2);
     g->work("GraphContent.txt");
 }
