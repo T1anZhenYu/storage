@@ -20,7 +20,7 @@
 using namespace std;
 #define MAX_LINE_LEN 4000
 #define MAX_VERTEX_NUM 600 //图中最大顶点个数
-#define FILENUM 40 //文件数目
+#define FILENUM 40  //文件数目
 
 #define MYINFINITY 1000000 //将MYINFINITY定义为无穷大的值
 #define BACKHUAL 10 //回传时延
@@ -572,7 +572,7 @@ void Graph::LRUCacheProb()
     }
     cout << "LRUCacheProb\n";
     for (int i = 0; i < FILENUM; i++) {
-        if (i % BACKHUAL== 0) {
+        if (i % BACKHUAL == 0) {
             cout << LRUFileProb[i] << " ";
         }
     }
@@ -774,12 +774,15 @@ void Graph::cacheInDistance(float& HitS2T, float& HitT2S, float& HitEqual, int f
             }
             // cout<<endl;
         }
-        // cout <<"Method:"<<filed<<"\tfileID:" << f <<"\ttimelim:"<<soft2TightTimeLim[f]<<" "
-        // <<tight2SoftTimeLim[f]<<" "<<equalTimeLim[f]<< "\tS2T:" << fhitS2T << "\tT2S:"
-        // << fhitT2S << "\tEqual:" << fhitEqual << endl;
+
         hitS2T += (float(fhitS2T) / float(this->getVertexNum() - 1));
         hitT2S += (float(fhitT2S) / float(this->getVertexNum() - 1));
         hitEqual += (float(fhitEqual) / float(this->getVertexNum() - 1));
+
+        // cout << "Method:" << filed << "\tfileID:" << f << "\ttimelim:" << soft2TightTimeLim[f] << " "
+        //      << tight2SoftTimeLim[f] << " " << equalTimeLim[f] << "\tS2T:" << fhitS2T << "\tT2S:"
+        //      << fhitT2S << "\tEqual:" << fhitEqual << "\thitS2t:" << hitS2T << "\thitT2S"
+        //      << hitT2S << "\thitEqual:" << hitEqual << endl;
         // cout<<"f:"<<f<<" hitS2t:"<<hitS2T<<" hitT2S"<<hitT2S<<endl;
     }
 
@@ -1119,7 +1122,7 @@ int main(int argc, char* argv[])
         G.printShorestPath(s);
     }
     ofstream out("result.txt");
-    for (int i = 4; i < 5; i++) {
+    for (int i = 6; i < 7; i++) {
         CACHESIZE = i;
         cout << "######################################" << endl;
         cout << "######################################" << endl;

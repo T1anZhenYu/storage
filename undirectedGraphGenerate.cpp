@@ -72,6 +72,6 @@ void generageGraph::work(string filename)
 int main()
 {
     generageGraph* g;
-    g = new generageGraph(10, 2);
+    g = new generageGraph(30, 2);
     g->work("GraphContent.txt");
 }
